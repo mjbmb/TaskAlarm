@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(/usr/local/go/**)",
+      "Read(/home/martin/go/**)",
+      "Read(/usr/**)",
+      "Read(/home/martin/**)",
+      "Bash(export PATH=$PATH:/usr/local/go/bin && go *)",
+      "Bash(go build *)",
+      "Bash(go mod *)",
+      "Bash(go test *)",
+      "Bash(go run *)",
+      "Bash(go vet *)",
+      "Bash(git *)",
+      "Bash(ls *)",
+      "Bash(mkdir -p *)",
+      "Bash(paplay *)",
+      "Bash(notify-send *)",
+      "Bash(gitmanager *)"
+    ]
+  }
+}
