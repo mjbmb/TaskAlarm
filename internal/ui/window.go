@@ -18,7 +18,10 @@ import (
 )
 
 // soundNotifier routes reminder/alarm events to actual sound + desktop notifications.
-type soundNotifier struct{}
+// win must be set before use.
+type soundNotifier struct {
+	win fyne.Window
+}
 
 func (s *soundNotifier) Remind(taskName string) {
 	sound.Reminder()
@@ -27,9 +30,52 @@ func (s *soundNotifier) Remind(taskName string) {
 }
 
 func (s *soundNotifier) Alarm(projected, deadline string) {
-	sound.Alarm()
+	if sound.IsAlarmRunning() {
+		return // dialog already open
+	}
+	sound.StartAlarm()
 	sound.NotifyUrgent("⚠️ TaskAlarm – Zeitplan überschritten!",
-		fmt.Sprintf("Ende: ca. %s Uhr  (Ziel: %s Uhr)\nBitte Task beginnen oder abschließen!", projected, deadline))
+		fmt.Sprintf("Ende: ca. %s Uhr  (Ziel: %s Uhr)", projected, deadline))
+	s.showAlarmDialog(projected, deadline)
+}
+
+func (s *soundNotifier) showAlarmDialog(projected, deadline string) {
+	icon := canvas.NewText("⚠️", colorRed)
+	icon.TextSize = 48
+	icon.Alignment = fyne.TextAlignCenter
+
+	title := canvas.NewText("Zeitplan überschritten!", colorRed)
+	title.TextSize = 20
+	title.TextStyle = fyne.TextStyle{Bold: true}
+	title.Alignment = fyne.TextAlignCenter
+
+	info := widget.NewLabelWithStyle(
+		fmt.Sprintf("Voraussichtliches Ende: %s Uhr\nZiel: %s Uhr\n\nBitte Task beginnen oder abschließen!", projected, deadline),
+		fyne.TextAlignCenter, fyne.TextStyle{},
+	)
+
+	var dlg *dialog.CustomDialog
+
+	stopBtn := widget.NewButton("🔕  Alarm stoppen", func() {
+		sound.StopAlarm()
+		if dlg != nil {
+			dlg.Hide()
+		}
+	})
+	stopBtn.Importance = widget.DangerImportance
+
+	content := container.NewVBox(
+		container.NewCenter(icon),
+		container.NewCenter(title),
+		info,
+		container.NewCenter(stopBtn),
+	)
+
+	dlg = dialog.NewCustom("TaskAlarm – Achtung!", "Schließen", content, s.win)
+	dlg.SetOnClosed(func() {
+		sound.StopAlarm()
+	})
+	dlg.Show()
 }
 
 type mainWindow struct {
@@ -58,8 +104,12 @@ func NewMainWindow(a fyne.App, store *storage.Storage) fyne.Window {
 	mw.window = a.NewWindow("TaskAlarm")
 	mw.window.Resize(fyne.NewSize(700, 780))
 	mw.window.SetMaster()
-	mw.window.SetOnClosed(func() { _ = store.Save() })
-	mw.checker = reminder.NewChecker(store, &soundNotifier{})
+	mw.window.SetOnClosed(func() {
+		sound.StopAlarm()
+		_ = store.Save()
+	})
+	notifier := &soundNotifier{win: mw.window}
+	mw.checker = reminder.NewChecker(store, notifier)
 
 	mw.buildUI()
 	mw.handleStartup()

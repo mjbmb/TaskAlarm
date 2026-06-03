@@ -8,6 +8,10 @@ import (
 
 var mu sync.Mutex
 
+// alarmStop cancels a running alarm loop when closed.
+var alarmStop chan struct{}
+var alarmCmd *exec.Cmd
+
 var reminderSounds = []string{
 	"/usr/share/sounds/freedesktop/stereo/message-new-instant.oga",
 	"/usr/share/sounds/freedesktop/stereo/message.oga",
@@ -21,41 +25,96 @@ var alarmSounds = []string{
 	"/usr/share/sounds/freedesktop/stereo/dialog-error.oga",
 }
 
-func playOga(files []string) {
+func playOgaOnce(files []string) {
 	for _, f := range files {
 		if _, err := os.Stat(f); err != nil {
 			continue
 		}
-		if exec.Command("paplay", f).Run() == nil {
+		cmd := exec.Command("paplay", f)
+		mu.Lock()
+		alarmCmd = cmd
+		mu.Unlock()
+		if cmd.Run() == nil {
 			return
 		}
-		if exec.Command("aplay", f).Run() == nil {
+		cmd2 := exec.Command("aplay", f)
+		mu.Lock()
+		alarmCmd = cmd2
+		mu.Unlock()
+		if cmd2.Run() == nil {
 			return
 		}
 	}
-	// terminal bell fallback
 	print("\007")
 }
 
-// Reminder plays a gentle notification sound (next task waiting).
+// Reminder plays a gentle notification sound once.
 func Reminder() {
-	mu.Lock()
-	defer mu.Unlock()
-	go playOga(reminderSounds)
+	go func() {
+		for _, f := range reminderSounds {
+			if _, err := os.Stat(f); err != nil {
+				continue
+			}
+			if exec.Command("paplay", f).Run() == nil {
+				return
+			}
+		}
+		print("\007")
+	}()
 }
 
-// Alarm plays an urgent alarm (tasks running late, 20:00 missed).
-func Alarm() {
+// StartAlarm begins a continuous alarm loop until StopAlarm is called.
+func StartAlarm() {
 	mu.Lock()
-	defer mu.Unlock()
+	if alarmStop != nil {
+		// already running
+		mu.Unlock()
+		return
+	}
+	stop := make(chan struct{})
+	alarmStop = stop
+	mu.Unlock()
+
 	go func() {
-		for i := 0; i < 3; i++ {
-			playOga(alarmSounds)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				playOgaOnce(alarmSounds)
+				// brief pause between repetitions so select can fire
+				select {
+				case <-stop:
+					return
+				default:
+				}
+			}
 		}
 	}()
 }
 
-// Notify sends a desktop notification with optional sound.
+// StopAlarm stops the current alarm loop immediately.
+func StopAlarm() {
+	mu.Lock()
+	defer mu.Unlock()
+	if alarmStop != nil {
+		close(alarmStop)
+		alarmStop = nil
+	}
+	if alarmCmd != nil {
+		_ = alarmCmd.Process.Kill()
+		alarmCmd = nil
+	}
+}
+
+// IsAlarmRunning reports whether the alarm is currently active.
+func IsAlarmRunning() bool {
+	mu.Lock()
+	defer mu.Unlock()
+	return alarmStop != nil
+}
+
+// Notify sends a desktop notification.
 func Notify(title, body string) {
 	exec.Command("notify-send", "--urgency=normal", "--expire-time=8000", title, body).Run()
 }
