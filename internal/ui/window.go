@@ -11,6 +11,7 @@ import (
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
+	"github.com/mboeck/obmanager/obsidian"
 	"github.com/mjbmb/TaskAlarm/internal/model"
 	"github.com/mjbmb/TaskAlarm/internal/reminder"
 	"github.com/mjbmb/TaskAlarm/internal/sound"
@@ -187,24 +188,49 @@ func (mw *mainWindow) buildUI() {
 }
 
 func (mw *mainWindow) handleStartup() {
-	tasks := mw.store.GetTasks()
-
-	// Check for unfinished tasks from yesterday
 	yesterday := mw.store.YesterdayUnfinished()
 	if len(yesterday) > 0 {
 		showCarryOverDialog(mw.window, yesterday, func(selected []*model.Task) {
 			mw.store.CarryOverTasks(selected)
 			mw.rebuildTaskList()
+			mw.showObsidianIfNeeded(nil)
 		})
 		return
 	}
 
-	// First time today: show welcome
+	tasks := mw.store.GetTasks()
 	if len(tasks) == 0 {
 		showWelcomeDialog(mw.window, func() {
-			showAddTaskDialog(mw.window, mw.store, mw.rebuildTaskList)
+			mw.showObsidianIfNeeded(func() {
+				showAddTaskDialog(mw.window, mw.store, mw.rebuildTaskList)
+			})
 		})
+		return
 	}
+
+	mw.showObsidianIfNeeded(nil)
+}
+
+func (mw *mainWindow) showObsidianIfNeeded(then func()) {
+	call := func() {
+		if then != nil {
+			then()
+		}
+	}
+	if mw.store.Settings.ObsidianSetupDone {
+		call()
+		return
+	}
+	if !obsidian.IsInstalled() {
+		mw.store.Settings.ObsidianSetupDone = true
+		_ = mw.store.Save()
+		call()
+		return
+	}
+	showObsidianSetupDialog(mw.window, mw.store, func() {
+		mw.rebuildTaskList()
+		call()
+	})
 }
 
 func (mw *mainWindow) rebuildTaskList() {

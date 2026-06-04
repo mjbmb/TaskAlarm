@@ -2,6 +2,9 @@ package ui
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -9,6 +12,7 @@ import (
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/widget"
+	"github.com/mboeck/obmanager/obsidian"
 	"github.com/mjbmb/TaskAlarm/internal/model"
 	"github.com/mjbmb/TaskAlarm/internal/storage"
 )
@@ -146,6 +150,115 @@ func showCarryOverDialog(win fyne.Window, tasks []*model.Task, onCarryOver func(
 	)
 	dlg.Resize(fyne.NewSize(460, 300))
 	dlg.Show()
+}
+
+func showObsidianSetupDialog(win fyne.Window, store *storage.Storage, onDone func()) {
+	vaults, _ := obsidian.ListVaults()
+	sort.Slice(vaults, func(i, j int) bool {
+		return vaults[i].Path < vaults[j].Path
+	})
+
+	const newVaultOption = "Neue Vault erstellen…"
+	options := make([]string, 0, len(vaults)+1)
+	pathByOption := make(map[string]string, len(vaults))
+	for _, v := range vaults {
+		label := filepath.Base(v.Path) + "  (" + v.Path + ")"
+		options = append(options, label)
+		pathByOption[label] = v.Path
+	}
+	options = append(options, newVaultOption)
+
+	radio := widget.NewRadioGroup(options, nil)
+	if len(vaults) > 0 {
+		radio.SetSelected(options[0])
+	} else {
+		radio.SetSelected(newVaultOption)
+	}
+
+	intro := widget.NewLabel("Obsidian ist installiert! TaskAlarm kann deine Aufgaben\nals Markdown-Notizen in deiner Vault speichern.")
+
+	content := container.NewVBox(intro, widget.NewSeparator(), radio)
+
+	handled := false
+
+	var dlg *dialog.CustomDialog
+
+	skipBtn := widget.NewButton("Ohne Obsidian fortfahren", func() {
+		handled = true
+		store.Settings.UseObsidian = false
+		store.Settings.ObsidianSetupDone = true
+		_ = store.Save()
+		dlg.Hide()
+		onDone()
+	})
+	skipBtn.Importance = widget.LowImportance
+
+	saveBtn := widget.NewButton("Speichern", func() {
+		sel := radio.Selected
+		if sel == "" {
+			return
+		}
+		handled = true
+		dlg.Hide()
+		if sel == newVaultOption {
+			showNewVaultDialog(win, store, onDone)
+			return
+		}
+		store.Settings.UseObsidian = true
+		store.Settings.ObsidianVaultPath = pathByOption[sel]
+		store.Settings.ObsidianSetupDone = true
+		_ = store.Save()
+		onDone()
+	})
+	saveBtn.Importance = widget.HighImportance
+
+	dlg = dialog.NewCustom(
+		"Obsidian-Integration",
+		"Schließen",
+		container.NewVBox(content, widget.NewSeparator(), container.NewCenter(container.NewHBox(skipBtn, saveBtn))),
+		win,
+	)
+	dlg.SetOnClosed(func() {
+		if !handled {
+			store.Settings.ObsidianSetupDone = true
+			_ = store.Save()
+			onDone()
+		}
+	})
+	dlg.Resize(fyne.NewSize(520, 360))
+	dlg.Show()
+}
+
+func showNewVaultDialog(win fyne.Window, store *storage.Storage, onDone func()) {
+	home, _ := os.UserHomeDir()
+	pathEntry := widget.NewEntry()
+	pathEntry.SetText(filepath.Join(home, "Dokumente", "TaskAlarm"))
+
+	items := []*widget.FormItem{
+		widget.NewFormItem("Vault-Pfad", pathEntry),
+	}
+	dialog.ShowForm("Neue Vault erstellen", "Erstellen", "Abbrechen", items, func(ok bool) {
+		if !ok {
+			showObsidianSetupDialog(win, store, onDone)
+			return
+		}
+		vaultPath := strings.TrimSpace(pathEntry.Text)
+		if vaultPath == "" {
+			dialog.ShowError(simpleErr("Bitte einen Pfad eingeben."), win)
+			showObsidianSetupDialog(win, store, onDone)
+			return
+		}
+		if err := obsidian.RegisterVault(vaultPath); err != nil {
+			dialog.ShowError(fmt.Errorf("Vault konnte nicht erstellt werden: %w", err), win)
+			showObsidianSetupDialog(win, store, onDone)
+			return
+		}
+		store.Settings.UseObsidian = true
+		store.Settings.ObsidianVaultPath = vaultPath
+		store.Settings.ObsidianSetupDone = true
+		_ = store.Save()
+		onDone()
+	}, win)
 }
 
 type simpleError struct{ msg string }

@@ -37,6 +37,14 @@ func playOgaOnce(files []string) {
 		if cmd.Run() == nil {
 			return
 		}
+		// If paplay was killed by StopAlarm, don't fall through to aplay.
+		// aplay can't decode .oga and would output the raw bytes as noise.
+		mu.Lock()
+		stopped := alarmStop == nil
+		mu.Unlock()
+		if stopped {
+			return
+		}
 		cmd2 := exec.Command("aplay", f)
 		mu.Lock()
 		alarmCmd = cmd2

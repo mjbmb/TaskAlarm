@@ -12,9 +12,12 @@ import (
 )
 
 type Settings struct {
-	BufferMinutes int `json:"buffer_minutes"`
-	EndHour       int `json:"end_hour"`
-	EndMinute     int `json:"end_minute"`
+	BufferMinutes     int    `json:"buffer_minutes"`
+	EndHour           int    `json:"end_hour"`
+	EndMinute         int    `json:"end_minute"`
+	UseObsidian       bool   `json:"use_obsidian"`
+	ObsidianVaultPath string `json:"obsidian_vault_path"`
+	ObsidianSetupDone bool   `json:"obsidian_setup_done"`
 }
 
 type DayData = DayDataExport
@@ -65,6 +68,14 @@ func (s *Storage) load() {
 	}
 	if s.Settings.EndHour == 0 && s.Settings.EndMinute == 0 {
 		s.Settings.EndHour = 20
+	}
+
+	today := time.Now().Format("2006-01-02")
+	if s.Settings.UseObsidian && s.Settings.ObsidianVaultPath != "" {
+		if tasks, err := loadMarkdownDay(s.Settings.ObsidianVaultPath, today); err == nil && len(tasks) > 0 {
+			s.Tasks = tasks
+			return
+		}
 	}
 
 	if data, err := os.ReadFile(s.todayFile()); err == nil {
@@ -187,11 +198,15 @@ func (s *Storage) reorderUnlocked() {
 }
 
 func (s *Storage) saveUnlocked() {
-	dayData := DayData{Tasks: s.Tasks, Date: time.Now().Format("2006-01-02")}
+	today := time.Now().Format("2006-01-02")
+	dayData := DayData{Tasks: s.Tasks, Date: today}
 	data, _ := json.Marshal(dayData)
 	_ = os.WriteFile(s.todayFile(), data, 0644)
 	if data, err := json.Marshal(s.Settings); err == nil {
 		_ = os.WriteFile(s.settingsFile(), data, 0644)
+	}
+	if s.Settings.UseObsidian && s.Settings.ObsidianVaultPath != "" {
+		_ = saveMarkdownDay(s.Settings.ObsidianVaultPath, today, s.Tasks)
 	}
 }
 
@@ -231,6 +246,19 @@ func (s *Storage) IsOnTime(now time.Time) bool {
 // YesterdayUnfinished returns incomplete tasks from yesterday's file.
 func (s *Storage) YesterdayUnfinished() []*model.Task {
 	yesterday := time.Now().AddDate(0, 0, -1).Format("2006-01-02")
+
+	if s.Settings.UseObsidian && s.Settings.ObsidianVaultPath != "" {
+		if tasks, err := loadMarkdownDay(s.Settings.ObsidianVaultPath, yesterday); err == nil && len(tasks) > 0 {
+			var unfinished []*model.Task
+			for _, t := range tasks {
+				if t.Status != model.StatusDone {
+					unfinished = append(unfinished, t)
+				}
+			}
+			return unfinished
+		}
+	}
+
 	file := filepath.Join(s.configDir, yesterday+".json")
 	data, err := os.ReadFile(file)
 	if err != nil {
